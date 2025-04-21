@@ -18,6 +18,7 @@ TOP_SYMBOLS = 100
 BINANCE_BASE = "https://api.binance.com"
 HEADERS = {"Accept": "application/json"}
 
+
 def send_alert(msg):
     """Send alert via Telegram bot."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -37,6 +38,65 @@ def send_alert(msg):
         time.sleep(RETRY_DELAY)
     return False
 
+
+def get_symbols():
+    """Fetch top symbols by volume from Binance."""
+    try:
+        url = f"{BINANCE_BASE}/api/v3/ticker/24hr"
+        r = requests.get(url, timeout=10, headers=HEADERS)
+        r.raise_for_status()
+        data = r.json()
+        filtered = [
+            x for x in data 
+            if x['symbol'].endswith('USDT') and 
+            not any(x['symbol'].startswith(st) for st in STABLECOINS) and 
+            float(x['quoteVolume']) > MIN_VOLUME
+        ]
+        return sorted(filtered, key=lambda x: -float(x['quoteVolume']))[:TOP_SYMBOLS]
+    except Exception as e:
+        print(f"Symbol fetch failed: {e}")
+        return []
+
+
+def get_ohlc(symbol):
+    """Get OHLC data for a symbol."""
+    url = f"{BINANCE_BASE}/api/v3/klines"
+    params = {"symbol": symbol, "interval": "15m", "limit": 100}
+    for _ in range(MAX_RETRIES):
+        try:
+            r = requests.get(url, params=params, timeout=10, headers=HEADERS)
+            r.raise_for_status()
+            data = r.json()
+            return [float(x[4]) for x in data]  # Close prices
+        except Exception as e:
+            print(f"OHLC fail {symbol}: {e}")
+            time.sleep(RETRY_DELAY)
+    return []
+
+
+def calculate_rsi(prices, period=14):
+    """Calculate RSI from price data."""
+    if len(prices) < period:
+        return None
+    delta = pd.Series(prices).diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(com=period-1, min_periods=period).mean()
+    avg_loss = loss.ewm(com=period-1, min_periods=period).mean()
+    rs = avg_gain / avg_loss
+    return (100 - (100 / (1 + rs))).iloc[-1]
+
+
+def check_cross(prices):
+    """Check EMA25 vs Smoothed SMA50 crossover."""
+    if len(prices) < 50:
+        return False
+    prices_series = pd.Series(prices)
+    ema25 = prices_series.ewm(span=25, adjust=False).mean().iloc[-1]
+    ssma50 = prices_series.rolling(50).mean().ewm(alpha=1/50, adjust=False).mean().iloc[-1]
+    return ema25 > ssma50
+
+
 def build_alert_message(symbol, price, rsi, volume, now):
     """Build the alert message with proper line breaks."""
     lines = [
@@ -48,6 +108,7 @@ def build_alert_message(symbol, price, rsi, volume, now):
     ]
     return "\n".join(lines)
 
+
 def build_start_message():
     """Build the startup message."""
     lines = [
@@ -58,6 +119,7 @@ def build_start_message():
         f"• TZ: UTC+{TIMEZONE_OFFSET}"
     ]
     return "\n".join(lines)
+
 
 def scan_and_alert():
     """Scan symbols and send alerts for signals."""
@@ -84,6 +146,7 @@ def scan_and_alert():
             time.sleep(1)  # Rate limiting
     return alerts
 
+
 def main():
     """Main bot loop."""
     send_alert(build_start_message())
@@ -94,4 +157,14 @@ def main():
         print(f"Alerts sent: {alerts}")
         time.sleep(SCAN_INTERVAL)
 
-# [Rest of your existing functions: get_symbols, get_ohlc, calculate_rsi, check_cross]
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        send_alert("🛑 Bot manually stopped")
+        print("Bot stopped by user")
+    except Exception as e:
+        send_alert(f"💥 Critical Error: {str(e)}")
+        print(f"Error: {e}")
+        raise
