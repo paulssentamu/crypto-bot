@@ -2,7 +2,6 @@ import time
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from collections import deque
 
 # CONFIG
 BOT_TOKEN = "8087555275:AAEn-ECydLhkVz2asdusbHpdwnsTI9p6Sd8"
@@ -49,9 +48,9 @@ def get_symbols():
         data = r.json()
         filtered = [
             x for x in data 
-            if x['symbol'].endswith('USDT')
-            and not any(x['symbol'].startswith(st) for st in STABLECOINS)
-            and float(x['quoteVolume']) > MIN_VOLUME
+            if x['symbol'].endswith('USDT') and 
+            not any(x['symbol'].startswith(st) for st in STABLECOINS) and 
+            float(x['quoteVolume']) > MIN_VOLUME
         ]
         return sorted(filtered, key=lambda x: -float(x['quoteVolume']))[:TOP_SYMBOLS]
     except Exception as e:
@@ -85,7 +84,7 @@ def calculate_rsi(prices, period=14):
     avg_gain = gain.ewm(com=period-1, min_periods=period).mean()
     avg_loss = loss.ewm(com=period-1, min_periods=period).mean()
     rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs)).iloc[-1]
+    return (100 - (100 / (1 + rs))).iloc[-1]
 
 
 def check_cross(prices):
